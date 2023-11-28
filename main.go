@@ -2,64 +2,107 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"encoding/binary"
 	"log"
-	"sync"
+	"math/bits"
+	"math/rand"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 )
 
 const (
-	topic     = "my-topic"
+	topic     = "randomIntStream"
 	partition = 0
 )
 
+func repeatFunc[T any, K any](done <-chan K, fn func() T) <-chan T {
+	stream := make(chan T)
+	go func() {
+		defer close(stream)
+		for {
+			select {
+			case <-done:
+				return
+			case stream <- fn():
+			}
+		}
+	}()
+	return stream
+}
+
+func take[T any, K any](done <-chan K, stream <-chan T, n int) <-chan T {
+	taken := make(chan T)
+	go func() {
+		defer close(taken)
+		for i := 0; i < n; i++ {
+			select {
+			case <-done:
+				return
+			case taken <- <-stream:
+			}
+		}
+	}()
+	return taken
+}
+
+func primeFinder(done <-chan bool, randIntStream <-chan int) <-chan int {
+	isPrime := func(randomInt int) bool {
+		for i := randomInt - 1; i > 1; i-- {
+			if randomInt%i == 0 {
+				return false
+			}
+		}
+		return true
+	}
+
+	primes := make(chan int)
+	go func() {
+		defer close(primes)
+		for {
+			select {
+			case <-done:
+			case randomInt := <-randIntStream:
+				if isPrime(randomInt) {
+					primes <- randomInt
+				}
+			}
+		}
+	}()
+	return primes
+}
+
+func encodeUint(x uint64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, x)
+	return buf[bits.LeadingZeros64(x)>>3:]
+}
+
 func main() {
-	var wg sync.WaitGroup
-	wg.Add(1)
 
 	conn, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9093", topic, partition)
 	if err != nil {
 		log.Fatal("failed to dial leader:", err)
 	}
 
-	go Consumer(conn, &wg)
-
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err = conn.WriteMessages(
-		kafka.Message{Value: []byte("one!")},
-		kafka.Message{Value: []byte("two!")},
-		kafka.Message{Value: []byte("three!")},
-	)
-	if err != nil {
-		log.Fatal("failed to write messages:", err)
+
+	done := make(chan bool)
+	randNumFetcher := func() uint64 { return rand.Uint64() }
+	randIntStream := repeatFunc(done, randNumFetcher)
+	// primeStream := primeFinder(done, randIntStream)
+
+	// for randInt := range take(done, primeStream, 10) {
+	// 	fmt.Println(randInt)
+	// }
+
+	for randInt := range randIntStream {
+		_, err := conn.Write(encodeUint(randInt))
+		if err != nil {
+			log.Fatal("failed to write message:", err)
+		}
 	}
-
-	wg.Wait()
-
 	if err := conn.Close(); err != nil {
 		log.Fatal("failed to close writer:", err)
-	}
-}
-
-func Consumer(conn *kafka.Conn, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	batch := conn.ReadBatch(10e3, 1e6) // fetch 10KB min, 1MB max
-
-	b := make([]byte, 10e3)
-
-	for {
-		n, err := batch.Read(b)
-		if err != nil {
-			break
-		}
-		fmt.Println(string(b[:n]))
-	}
-
-	if err := batch.Close(); err != nil {
-		log.Fatal("failed to close batch:", err)
 	}
 }
