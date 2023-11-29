@@ -1,19 +1,8 @@
 package main
 
 import (
-	"context"
-	"encoding/binary"
-	"log"
-	"math/bits"
+	"fmt"
 	"math/rand"
-	"time"
-
-	"github.com/segmentio/kafka-go"
-)
-
-const (
-	topic     = "randomIntStream"
-	partition = 0
 )
 
 func repeatFunc[T any, K any](done <-chan K, fn func() T) <-chan T {
@@ -72,37 +61,14 @@ func primeFinder(done <-chan bool, randIntStream <-chan int) <-chan int {
 	return primes
 }
 
-func encodeUint(x uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, x)
-	return buf[bits.LeadingZeros64(x)>>3:]
-}
-
 func main() {
 
-	conn, err := kafka.DialLeader(context.Background(), "tcp", "localhost:9093", topic, partition)
-	if err != nil {
-		log.Fatal("failed to dial leader:", err)
-	}
-
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-
 	done := make(chan bool)
-	randNumFetcher := func() uint64 { return rand.Uint64() }
+	randNumFetcher := func() int { return rand.Intn(50000000) }
 	randIntStream := repeatFunc(done, randNumFetcher)
-	// primeStream := primeFinder(done, randIntStream)
+	primeStream := primeFinder(done, randIntStream)
 
-	// for randInt := range take(done, primeStream, 10) {
-	// 	fmt.Println(randInt)
-	// }
-
-	for randInt := range randIntStream {
-		_, err := conn.Write(encodeUint(randInt))
-		if err != nil {
-			log.Fatal("failed to write message:", err)
-		}
-	}
-	if err := conn.Close(); err != nil {
-		log.Fatal("failed to close writer:", err)
+	for randInt := range take(done, primeStream, 10) {
+		fmt.Println(randInt)
 	}
 }
