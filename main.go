@@ -1,12 +1,20 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"gokafka/internal"
+	"gokafka/kafka"
+	"log"
 	"math/rand"
+
+	kafkago "github.com/segmentio/kafka-go"
+	"golang.org/x/sync/errgroup"
 )
 
+// TODO: create config
+
 func repeatFunc[T any, K any](done <-chan K, fn func() T) <-chan T {
-	stream := make(chan T)
+	stream := make(chan T, 1000)
 	go func() {
 		defer close(stream)
 		for {
@@ -64,11 +72,38 @@ func primeFinder(done <-chan bool, randIntStream <-chan int) <-chan int {
 func main() {
 
 	done := make(chan bool)
-	randNumFetcher := func() int { return rand.Intn(50000000) }
-	randIntStream := repeatFunc(done, randNumFetcher)
-	primeStream := primeFinder(done, randIntStream)
+	randIntMessageStream := make(<-chan kafkago.Message, 1000)
+	randNumFetcher := func() kafkago.Message { return kafkago.Message{Value: internal.ItoBSlice(rand.Intn(5000000))} }
+	randIntMessageStream = repeatFunc(done, randNumFetcher)
+	// primeStream := primeFinder(done, randIntStream)
 
-	for randInt := range take(done, primeStream, 10) {
-		fmt.Println(randInt)
+	// for randInt := range take(done, primeStream, 10) {
+	// 	fmt.Println(randInt)
+	// }
+
+	reader := kafka.NewKafkaReader()
+	writer := kafka.NewKafkaWriter()
+
+	ctx := context.Background()
+	// messages := make(chan kafkago.Message, 1000)
+	// messageCommitChan := make(chan kafkago.Message, 1000)
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return writer.WriteMessages(ctx, randIntMessageStream)
+	})
+
+	g.Go(func() error {
+		return reader.FetchMessages(ctx)
+	})
+
+	// g.Go(func() error {
+	// 	return reader.CommitMessage(ctx, messageCommitChan)
+	// })
+
+	err := g.Wait()
+	if err != nil {
+		log.Fatalln(err)
 	}
 }

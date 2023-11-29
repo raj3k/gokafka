@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 
+	"github.com/pkg/errors"
 	kafkago "github.com/segmentio/kafka-go"
 )
 
@@ -40,7 +41,7 @@ func NewKafkaWriter() *KafkaWriter {
 // 	}
 // }
 
-func (k *KafkaWriter) WriteMessages(ctx context.Context, messages chan kafkago.Message) error {
+func (k *KafkaWriter) WriteMessages(ctx context.Context, messages <-chan kafkago.Message) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -50,7 +51,7 @@ func (k *KafkaWriter) WriteMessages(ctx context.Context, messages chan kafkago.M
 				Value: m.Value,
 			})
 			if err != nil {
-				return err
+				return errors.Wrap(err, "Writer.WriteMessages")
 			}
 		}
 	}

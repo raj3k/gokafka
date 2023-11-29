@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"gokafka/internal"
 	"log"
 
 	"github.com/pkg/errors"
@@ -17,7 +18,6 @@ func NewKafkaReader() *KafkaReader {
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
 		Brokers: []string{"localhost:9093"},
 		Topic:   "random_numbers",
-		GroupID: "group",
 	})
 
 	return &KafkaReader{
@@ -46,9 +46,9 @@ func (k *KafkaReader) FetchMessages(ctx context.Context) error {
 	for {
 		message, err := k.Reader.FetchMessage(ctx)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "Reader.FetchMessages")
 		}
-		fmt.Println(string(message.Value))
+		fmt.Println(internal.ByteArrayToInt(message.Value))
 	}
 }
 
